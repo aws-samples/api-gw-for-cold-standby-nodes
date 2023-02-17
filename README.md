@@ -2,9 +2,8 @@
 
 ***
 
-## Automation of Autoscaling Group Cold Standby Usecase
-
 ## Description
+### Automation of Autoscaling Group Cold Standby Usecase
 Launch and pre-configuration of EC2 instance can take several minutes in some scenarios. This could be a barrier for quick scale-out use cases where new compute resources need to be brought online in a short period of time. One way around it is to full pre-configure the EC2 instances and perform stop/power-off on them. However, if the instances are part of an Autoscaling Group, ASG health check will bring up new instances in order to fulfill the current desired capacity. ASG API allows for instances to be place in standby and decrement desired capacity thus not triggering creation of new instances by the healthcheck.
 
 This repo automates the process of powering On/Off instances inside Autoscaling Group via a simple API call.
