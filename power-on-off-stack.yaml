@@ -1,0 +1,282 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: API Gateway and Lambda function for cold standby nodes
+
+Parameters:
+  apiGatewayName:
+    Type: String
+    Default: power-on-off-asg-api
+  vpcId:
+    Type: String
+    Default: vpc-08bf658ce99d6e024
+  lambdaFunctionName:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]+[a-zA-Z0-9-]+[a-zA-Z0-9]+'
+    Default: power-on-off-asg-function
+  subnetIDs:
+    Description: "Comma separated list of subnet ids of the VPC to be used for API GW VPC Endpoint"
+    Type: String
+    Default: subnet-0c2cca9164b33f2dd,subnet-0c27091105caa1b58
+
+Resources:
+  apiGwEndpointSG:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties: 
+      VpcId: !Ref "vpcId"
+      GroupDescription: "API GW VPC Endpoint Security Group"
+      SecurityGroupIngress:
+        - FromPort: "443"
+          IpProtocol: "tcp"
+          CidrIp: '0.0.0.0/0'
+          ToPort: "443"
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+      Tags:
+        - Key: "Name"
+          Value: "APIgatewayVPCendpointSG"
+
+  VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      SecurityGroupIds:
+        - !Ref apiGwEndpointSG
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.execute-api"
+      SubnetIds: !Split [",", !Ref subnetIDs]
+      VpcEndpointType: Interface
+      VpcId: !Ref vpcId
+
+  apiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - PRIVATE
+        VpcEndpointIds: 
+          - !Ref VPCEndpoint
+      Policy: 
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Deny
+          Principal: "*"
+          Action: execute-api:Invoke
+          Resource:
+            arn:aws:execute-api:*:*:*/*
+          Condition:
+            StringNotEquals:
+              aws:sourceVpc: !Ref vpcId
+        - Effect: Allow
+          Principal: "*"
+          Action: execute-api:Invoke
+          Resource: 
+            arn:aws:execute-api:*:*:*/*
+      Name: !Ref apiGatewayName
+
+  apiGatewayPoweronResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !GetAtt "apiGateway.RootResourceId"
+      PathPart: 'poweron'
+      RestApiId: !Ref "apiGateway"
+
+  apiGatewayPoweroffResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      ParentId: !GetAtt "apiGateway.RootResourceId"
+      PathPart: 'poweroff'
+      RestApiId: !Ref "apiGateway"
+
+  apiGatewayPoweronMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      OperationName: poweron
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt lambdaFunction.Arn
+      ResourceId: !Ref apiGatewayPoweronResource
+      RestApiId: !Ref apiGateway
+
+  apiGatewayPoweroffMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      OperationName: poweroff
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations
+          - lambdaArn: !GetAtt lambdaFunction.Arn
+      ResourceId: !Ref apiGatewayPoweroffResource
+      RestApiId: !Ref apiGateway
+
+  apiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - apiGatewayPoweronMethod
+    Properties:
+      RestApiId: !Ref apiGateway
+      StageName: prod
+
+  lambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          #!/usr/bin/env python3
+          # -----------------------------------------------------------
+          #// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          #// SPDX-License-Identifier: MIT-0
+          # This code demonstrates how to power on EC2 instances in a ASG
+          # author: Neb Miljanovic
+          # -----------------------------------------------------------
+          import boto3
+          import botocore
+          import os,sys
+          import time
+
+          from datetime import datetime
+
+          ec2_client = boto3.client('ec2')
+          asg_client = boto3.client('autoscaling')
+          ec2 = boto3.resource('ec2')
+          instance_id=None
+
+          def handler(event, context):
+              log("New event")
+              log(event)
+              log("get ASG name")
+              AutoScalingGroupName=event['queryStringParameters']['AutoScalingGroupName']
+              command=event['resource']
+              log("ASG:" + str(AutoScalingGroupName) + " Command:" + str(command) )
+    
+              response = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[str(AutoScalingGroupName)])
+              log(response)
+
+              if command == '/poweron':
+    
+                  for asg in response['AutoScalingGroups']:
+                      for instance in asg['Instances']:
+                          if instance['LifecycleState'] == 'Standby':
+                              log("Powering On InstanceId:" + str(instance['InstanceId']))
+                              poweron_response = ec2_client.start_instances(InstanceIds=[str(instance['InstanceId'])])
+                              log(poweron_response)
+                          else:
+                              log("Instance not in Standby:" + str(instance['InstanceId']))
+              
+                  time.sleep(3)            
+                  log("Now bring the instances out of standby in ASG")
+                  for asg in response['AutoScalingGroups']:
+                      for instance in asg['Instances']:
+                          if instance['LifecycleState'] == 'Standby':
+                              log("Exit Standby after Powering On InstanceId:" + str(instance['InstanceId']))
+                              exit_stby_response = asg_client.exit_standby(InstanceIds=[str(instance['InstanceId'])], AutoScalingGroupName=str(AutoScalingGroupName))
+                              log(exit_stby_response)
+                          else:
+                              log("Instance not in Standby:" + str(instance['InstanceId']))
+              elif command == '/poweroff':
+                  log("shutting down worker nodes in the ASG")
+        
+                  for asg in response['AutoScalingGroups']:
+                      for instance in asg['Instances']:
+                          if instance['LifecycleState'] == 'InService':
+                              log("Move to Standby before Powering Off InstanceId:" + str(instance['InstanceId']))
+                              enter_stby_response = asg_client.enter_standby(InstanceIds=[str(instance['InstanceId'])], AutoScalingGroupName=str(AutoScalingGroupName), ShouldDecrementDesiredCapacity=True)
+                              log(enter_stby_response)
+                          else:
+                              log("Instance not inService:" + str(instance['InstanceId']))
+                  
+                  time.sleep(5)            
+                  response = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[str(AutoScalingGroupName)])
+                  log(response)
+                  for asg in response['AutoScalingGroups']:
+                      for instance in asg['Instances']:
+                          if instance['LifecycleState'] == 'Standby':
+                              log("Powering Off InstanceId:" + str(instance['InstanceId']))
+                              poweroff_response = ec2_client.stop_instances(InstanceIds=[str(instance['InstanceId'])])
+                              log(poweroff_response)
+                          else:
+                              log("Instance not in Standby:" + str(instance['InstanceId']) + " state: " + str(instance['LifecycleState']))
+              else:
+                  return {
+                      "statusCode": 400
+                  }
+        
+              final_response = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[str(AutoScalingGroupName)])
+              log(final_response)
+              return {
+                  "statusCode": 200,
+                  "body": str(final_response)
+              }
+    
+          def log(error):
+              print('{}Z {}'.format(datetime.utcnow().isoformat(), error))
+      Description: ASG Power On-Off Lambda function
+      FunctionName: !Ref lambdaFunctionName
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt lambdaIAMRole.Arn
+      Timeout: 30
+      Runtime: python3.8
+
+  lambdaApiGatewayInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt lambdaFunction.Arn
+      Principal: apigateway.amazonaws.com
+      # note: if route *not* at API Gateway root, `SourceArn` would take the form of:
+      #               arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/${apiGatewayStageName}/${apiGatewayHTTPMethod}/PATH_PART
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/prod/POST/*
+
+  lambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AutoScalingFullAccess
+      - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+      Policies:
+        - PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${lambdaFunctionName}:*
+          PolicyName: lambda
+
+  lambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${lambdaFunctionName}
+      RetentionInDays: 90
+
+Outputs:
+  apiGatewayInvokeURL:
+    Value: !Sub https://${apiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod
+
+  powerOn:
+    Description: "To power ON, use POST method with ASG name as argument"
+    Value: !Sub https://${apiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/poweron?AutoScalingGroupName=XXXXXXXXXXX
+
+  powerOff:
+    Description: "To power OFF, use POST method with ASG name as argument"
+    Value: !Sub https://${apiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/poweroff?AutoScalingGroupName=XXXXXXXXXXX
