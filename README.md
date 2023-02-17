@@ -17,6 +17,8 @@ The Cloudformation template creates private API Gateway and Lambda Function with
 
 ### How to Use
 
+See the Output of the deployed Cloudformation stack for the API URL.
+
 To power Off all instances inside the given Autoscaling Group, invoke the API using POST method and pass in Autoscaling Group name as the argument. For example:
 
 curl  --request POST https://XXXXXXXX.execute-api.us-east-1.amazonaws.com/prod/poweroff?AutoScalingGroupName=XXXXXXXXX
