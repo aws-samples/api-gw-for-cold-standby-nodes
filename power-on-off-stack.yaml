@@ -117,10 +117,18 @@ Resources:
       ResourceId: !Ref apiGatewayPoweroffResource
       RestApiId: !Ref apiGateway
 
-  apiGatewayDeployment:
+  apiGatewayPowerOnDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - apiGatewayPoweronMethod
+    Properties:
+      RestApiId: !Ref apiGateway
+      StageName: prod
+
+  apiGatewayPowerOffDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - apiGatewayPoweroffMethod
     Properties:
       RestApiId: !Ref apiGateway
       StageName: prod
