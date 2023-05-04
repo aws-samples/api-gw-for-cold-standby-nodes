@@ -38,6 +38,7 @@ Resources:
   VPCEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
+      PrivateDnsEnabled: true
       SecurityGroupIds:
         - !Ref apiGwEndpointSG
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.execute-api"
@@ -233,7 +234,7 @@ Resources:
       Principal: apigateway.amazonaws.com
       # note: if route *not* at API Gateway root, `SourceArn` would take the form of:
       #               arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/${apiGatewayStageName}/${apiGatewayHTTPMethod}/PATH_PART
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/prod/POST/*
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/*
 
   lambdaIAMRole:
     Type: AWS::IAM::Role
