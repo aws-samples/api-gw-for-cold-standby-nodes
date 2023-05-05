@@ -6,16 +6,14 @@ Parameters:
     Type: String
     Default: power-on-off-asg-api
   vpcId:
-    Type: String
-    Default: vpc-08bf658ce99d6e024
+    Type: AWS::EC2::VPC::Id
   lambdaFunctionName:
     Type: String
     AllowedPattern: '[a-zA-Z0-9]+[a-zA-Z0-9-]+[a-zA-Z0-9]+'
     Default: power-on-off-asg-function
   subnetIDs:
-    Description: "Comma separated list of subnet ids of the VPC to be used for API GW VPC Endpoint"
-    Type: String
-    Default: subnet-0c2cca9164b33f2dd,subnet-0c27091105caa1b58
+    Description: "Select two subnet ids of the selected VPC to be used for API GW VPC Endpoint"
+    Type: "List<AWS::EC2::Subnet::Id>"
 
 Resources:
   apiGwEndpointSG:
@@ -42,7 +40,7 @@ Resources:
       SecurityGroupIds:
         - !Ref apiGwEndpointSG
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.execute-api"
-      SubnetIds: !Split [",", !Ref subnetIDs]
+      SubnetIds: !Split [',', !Join [',', !Ref subnetIDs]]
       VpcEndpointType: Interface
       VpcId: !Ref vpcId
 
